@@ -4,7 +4,7 @@ Requisites:
 
 Orca
 BitDefender.MSI
-Intune Win AppUtill tool
+Intune Prep Tool
 GZ_Package_ID
 
 Create a folder called Bitdefender.
@@ -21,7 +21,7 @@ Click Save
 Next Run the IntunewinappUtill.exe
 
 It will prompt you for the source folder
-Enter the file path for BitDefendernder folder you created 
+Enter the file path for the BitDefender folder you created 
 Next enter Bitdefender.msi as set-up up file
 Next it will ask you to specify the output folder (just use the same location as your BitDefender folder)
 Next it will ask you catalogue the folder just click no
@@ -44,3 +44,6 @@ Operator Equals or greater
 Value: 7.7.1.216
 
 Set assignments to all users and devices or any groups you may have set up 
+
+
+
