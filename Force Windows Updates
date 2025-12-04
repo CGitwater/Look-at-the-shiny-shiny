@@ -1,0 +1,51 @@
+# SCRIPT to silently search, download, and install Windows Updates.
+
+try {
+    $updateSession = New-Object -ComObject "Microsoft.Update.Session"
+    $updateSearcher = $updateSession.CreateUpdateSearcher()
+    $searchResult = $updateSearcher.Search("IsInstalled=0 and Type='Software' and IsHidden=0")
+
+    if ($searchResult.Updates.Count -eq 0) {
+        return
+    }
+
+    $updatesToDownload = New-Object -ComObject "Microsoft.Update.UpdateColl"
+    foreach ($update in $searchResult.Updates) {
+        $updatesToDownload.Add($update) | Out-Null
+    }
+
+    $downloader = $updateSession.CreateUpdateDownloader()
+    $downloader.Updates = $updatesToDownload
+    $downloadResult = $downloader.Download()
+
+    if ($downloadResult.ResultCode -ne 2) {
+        return
+    }
+
+    $updatesToInstall = New-Object -ComObject "Microsoft.Update.UpdateColl"
+    foreach ($update in $searchResult.Updates) {
+        if (-not $update.EulaAccepted) {
+            $update.AcceptEula()
+        }
+        if ($update.IsDownloaded) {
+            $updatesToInstall.Add($update) | Out-Null
+        }
+    }
+
+    if ($updatesToInstall.Count -eq 0) {
+        return
+    }
+
+    $installer = $updateSession.CreateUpdateInstaller()
+    $installer.Updates = $updatesToInstall
+    $installResult = $installer.Install()
+
+    # Optional: Auto-reboot if required
+    # if ($installResult.RebootRequired) {
+    #     Restart-Computer -Force
+    # }
+
+}
+catch {
+    # Silently fail or log if needed
+}
