@@ -1,0 +1,266 @@
+<#
+.SYNOPSIS
+    A silent, robust PowerShell script for RMM deployment to remediate multiple system vulnerabilities.
+
+.DESCRIPTION
+    This script runs silently and is designed to continue on error. All actions are logged to 
+    C:\ProgramData\RemediationScript\RemediationLog.log.
+    - Installs critical Windows Security Updates and reboots if necessary.
+    - Uninstalls End-of-Life .NET Core runtimes (3.1, 5.x, 6.x).
+    - Installs the latest .NET 8 LTS Desktop Runtime.
+    - Updates the Microsoft Visual C++ 2015-2022 Redistributable.
+    - Triggers a background update check for Microsoft Teams.
+    - Disables weak 3DES/DES ciphers in Schannel to mitigate Sweet32.
+    - Logs findings for third-party software that requires manual updates.
+
+.NOTES
+    Author: CDrinkwater
+    Version: 1.1 (Fixes applied)
+    Requires: PowerShell 5.1+, Administrator privileges, Internet connection.
+#>
+
+# --- Script Start ---
+
+#region Logging and Preamble
+
+# Set a system-wide, non-user-specific path for the log file
+$logFolder = "C:\ProgramData\RemediationScript"
+if (-not (Test-Path -Path $logFolder)) {
+    New-Item -Path $logFolder -ItemType Directory -Force
+}
+$logFile = Join-Path -Path $logFolder -ChildPath "RemediationLog.log"
+
+# Set error action preference to continue on non-terminating errors
+$ErrorActionPreference = "SilentlyContinue"
+
+# Central logging function
+Function Write-Log {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Message,
+
+        [Parameter(Mandatory=$false)]
+        [ValidateSet("INFO", "WARN", "ERROR", "SUCCESS")]
+        [string]$Level = "INFO"
+    )
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $logEntry = "[$timestamp] [$Level] $Message"
+    Add-Content -Path $logFile -Value $logEntry
+}
+
+# Initialize Log File
+Write-Log -Message "================ SCRIPT EXECUTION STARTED ================" -Level "INFO"
+#endregion
+
+#region 1. Windows and .NET Framework Updates
+Function Invoke-WindowsUpdate {
+    Write-Log -Message "Attempting to install Windows Security Updates..."
+    
+    if (-not (Get-Module -ListAvailable -Name PSWindowsUpdate)) {
+        Write-Log -Message "PSWindowsUpdate module not found. Attempting to install." -Level "INFO"
+        try {
+            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope AllUsers
+            # FIXED: Removed -AcceptLicense parameter for broader compatibility. -Force is sufficient.
+            Install-Module -Name PSWindowsUpdate -Force -SkipPublisherCheck -Scope AllUsers
+            Write-Log -Message "PSWindowsUpdate module installed successfully." -Level "SUCCESS"
+        }
+        catch {
+            Write-Log -Message "Failed to install PSWindowsUpdate module. Skipping Windows Update. Error: $($_.Exception.Message)" -Level "ERROR"
+            return
+        }
+    }
+
+    try {
+        Import-Module PSWindowsUpdate -ErrorAction Stop
+        Write-Log -Message "Searching for and installing all available security updates. System may reboot." -Level "INFO"
+        Get-WindowsUpdate -Install -AcceptAll -AutoReboot -SecurityOnly -ErrorAction Stop
+        Write-Log -Message "Windows Update process completed. A reboot may have been scheduled." -Level "SUCCESS"
+    }
+    catch {
+        Write-Log -Message "The Windows Update process failed or no updates were found. Error: $($_.Exception.Message)" -Level "WARN"
+    }
+}
+#endregion
+
+#region 2. .NET Core EOL Remediation and Upgrade
+Function Remediate-DotNetEOL {
+    Write-Log -Message "Starting .NET End-of-Life remediation..."
+    $eolPatterns = @(
+        "Microsoft .NET Runtime - 3.1.*", "Microsoft .NET SDK - 3.1.*", "Microsoft ASP.NET Core 3.1.*", "Microsoft Windows Desktop Runtime - 3.1.*",
+        "Microsoft .NET Runtime - 5.*", "Microsoft .NET SDK - 5.*", "Microsoft ASP.NET Core 5.*", "Microsoft Windows Desktop Runtime - 5.*",
+        "Microsoft .NET Runtime - 6.*", "Microsoft .NET SDK - 6.*", "Microsoft ASP.NET Core 6.*", "Microsoft Windows Desktop Runtime - 6.*"
+    )
+    
+    $uninstallKeys = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+    )
+
+    $itemsToUninstall = Get-ItemProperty -Path "$($uninstallKeys)\*" | ForEach-Object {
+        $item = $_
+        foreach ($pattern in $eolPatterns) {
+            if ($item.DisplayName -like $pattern) {
+                $item # Output the matched item
+                break
+            }
+        }
+    }
+
+    if ($itemsToUninstall) {
+        Write-Log -Message "Found ($($itemsToUninstall.Count)) EOL .NET components to uninstall."
+        foreach ($item in $itemsToUninstall) {
+            if ($item.UninstallString) {
+                Write-Log -Message "Uninstalling: $($item.DisplayName) (Version: $($item.DisplayVersion))"
+                $arguments = ($item.UninstallString -replace 'msiexec.exe','' -replace '/I','/X' -replace '/i','/X').Trim() + " /quiet /norestart"
+                try {
+                    Start-Process "msiexec.exe" -ArgumentList $arguments -Wait -ErrorAction Stop
+                    Write-Log -Message "Successfully uninstalled $($item.DisplayName)." -Level "SUCCESS"
+                } catch {
+                    Write-Log -Message "Failed to uninstall $($item.DisplayName). Error: $($_.Exception.Message)" -Level "ERROR"
+                }
+            }
+        }
+    } else {
+        Write-Log -Message "No End-of-Life .NET versions found to uninstall."
+    }
+
+    Write-Log -Message "Downloading and installing .NET 8 (LTS) Desktop Runtime (x64)..."
+    # FIXED: Replaced the direct, temporary download link with a stable evergreen link from Microsoft.
+    $installerUrl = "https://dotnet.microsoft.com/download/dotnet/8.0/runtime/desktop/x64"
+    $installerPath = Join-Path $env:TEMP "dotnet-desktop-runtime-8-latest.exe"
+    try {
+        Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing -ErrorAction Stop
+        Start-Process -FilePath $installerPath -ArgumentList "/install", "/quiet", "/norestart" -Wait -ErrorAction Stop
+        Write-Log -Message ".NET 8 Desktop Runtime installed successfully." -Level "SUCCESS"
+    }
+    catch {
+        Write-Log -Message "Could not download or install .NET 8. Manual installation may be required. Error: $($_.Exception.Message)" -Level "ERROR"
+    }
+    finally {
+        if (Test-Path $installerPath) { Remove-Item $installerPath -Force }
+    }
+}
+#endregion
+
+#region 3. Visual C++ Redistributable Update
+Function Update-VCRedist {
+    Write-Log -Message "Attempting to update Visual C++ 2015-2022 Redistributable (x64)."
+    $vcRedistUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+    $installerPath = Join-Path $env:TEMP "vc_redist.x64.exe"
+    try {
+        Invoke-WebRequest -Uri $vcRedistUrl -OutFile $installerPath -UseBasicParsing -ErrorAction Stop
+        Start-Process -FilePath $installerPath -ArgumentList "/install", "/passive", "/norestart" -Wait -ErrorAction Stop
+        Write-Log -Message "Visual C++ Redistributable update process completed successfully." -Level "SUCCESS"
+    }
+    catch {
+        Write-Log -Message "Failed to download or update the Visual C++ Redistributable. Error: $($_.Exception.Message)" -Level "ERROR"
+    }
+    finally {
+        if (Test-Path $installerPath) { Remove-Item $installerPath -Force }
+    }
+}
+#endregion
+
+#region 4. Microsoft Teams Update
+Function Update-Teams {
+    Write-Log -Message "Attempting to trigger a background update for Microsoft Teams."
+    $classicTeamsPath = Join-Path $env:LOCALAPPDATA "Microsoft\Teams\Update.exe"
+    if (Test-Path $classicTeamsPath) {
+        Start-Process -FilePath $classicTeamsPath -ArgumentList '--processStart "Teams.exe"'
+        Write-Log -Message "Classic Teams update check initiated."
+    }
+    $newTeams = Get-AppxPackage -Name "MSTeams"
+    if ($newTeams) {
+        Write-Log -Message "New Microsoft Teams is installed. Updates are managed via the Microsoft Store."
+    }
+    if (-not (Test-Path $classicTeamsPath) -and -not $newTeams) {
+        Write-Log -Message "Microsoft Teams does not appear to be installed."
+    }
+}
+#endregion
+
+#region 5. Disable Weak Ciphers (Sweet32)
+Function Disable-WeakCiphers {
+    Write-Log -Message "Disabling weak 3DES/DES ciphers in Schannel for Sweet32 mitigation."
+    $basePath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers"
+    $weakCiphers = @("Triple DES 168", "DES 56/56")
+
+    foreach ($cipher in $weakCiphers) {
+        try {
+            $keyPath = Join-Path $basePath $cipher
+            if (-not (Test-Path $keyPath)) {
+                New-Item -Path $keyPath -Force | Out-Null
+            }
+            Set-ItemProperty -Path $keyPath -Name "Enabled" -Value 0 -Type DWord -Force -ErrorAction Stop
+            Write-Log -Message "Successfully disabled cipher: $cipher" -Level "SUCCESS"
+        }
+        catch {
+             Write-Log -Message "Failed to disable cipher: $cipher. Error: $($_.Exception.Message)" -Level "ERROR"
+        }
+    }
+}
+#endregion
+
+#region 6. Check Third-Party Software (Log Only)
+Function Check-ThirdPartySoftware {
+    Write-Log -Message "Checking for vulnerable third-party software (logging findings only)..."
+
+    # Cisco
+    $ciscoVersion = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Cisco\Cisco AnyConnect Secure Mobility Client" -ErrorAction SilentlyContinue).Version
+    if ($ciscoVersion -and ([version]$ciscoVersion -lt [version]'4.10.00093')) {
+        Write-Log -Message "Vulnerable Cisco AnyConnect version $ciscoVersion detected. MANUAL UPDATE REQUIRED." -Level "WARN"
+    }
+
+    # Sysmon
+    $sysmon = Get-Item -Path "$env:SystemRoot\Sysmon*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($sysmon -and ($sysmon.VersionInfo.FileVersion -lt '14.16')) {
+        Write-Log -Message "Vulnerable Sysmon version $($sysmon.VersionInfo.FileVersion) detected. MANUAL UPDATE REQUIRED." -Level "WARN"
+    }
+
+    # TeamViewer
+    $tvVersion = (Get-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\TeamViewer" -ErrorAction SilentlyContinue).Version
+    if ($tvVersion -and ([version]$tvVersion -lt [version]'15.67')) {
+        Write-Log -Message "Vulnerable TeamViewer version $tvVersion detected. MANUAL UPDATE REQUIRED." -Level "WARN"
+    }
+    
+    # Ghostscript
+    $gsVersionKey = Get-ChildItem -Path "HKLM:\SOFTWARE\GPL Ghostscript" -ErrorAction SilentlyContinue
+    if ($gsVersionKey) {
+        $gsVersion = $gsVersionKey.PSChildName
+        if ([version]$gsVersion -lt [version]'10.03.1') {
+            Write-Log -Message "Vulnerable Ghostscript version $gsVersion detected. MANUAL UPDATE REQUIRED." -Level "WARN"
+        }
+    }
+    
+    # Adobe and Dell (Advisory log entries)
+    if (Get-Package -ProviderName Programs -Name "*Acrobat*" -ErrorAction SilentlyContinue) { Write-Log -Message "Adobe Acrobat is installed. Ensure it is updated via Adobe Creative Cloud." -Level "WARN" }
+    if (Get-Package -ProviderName Programs -Name "*Dell Command*" -ErrorAction SilentlyContinue) { Write-Log -Message "Dell Command | Update is installed. Ensure it is updated." -Level "WARN" }
+    if (Get-Package -ProviderName Programs -Name "*Dell SupportAssist*" -ErrorAction SilentlyContinue) { Write-Log -Message "Dell SupportAssist is installed. Ensure it is updated." -Level "WARN" }
+    
+    Write-Log -Message "Third-party software check complete."
+}
+#endregion
+
+#region Main Execution Block
+Write-Log -Message "Executing remediation functions..."
+
+$functions = @(
+    "Invoke-WindowsUpdate",
+    "Remediate-DotNetEOL",
+    "Update-VCRedist",
+    "Update-Teams",
+    "Disable-WeakCiphers",
+    "Check-ThirdPartySoftware"
+)
+
+foreach ($func in $functions) {
+    try {
+        Invoke-Expression -Command $func
+    }
+    catch {
+        Write-Log -Message "A critical error occurred in function '$func'. Moving to the next function. Error: $($_.Exception.Message)" -Level "ERROR"
+    }
+}
+
+Write-Log -Message "================ SCRIPT EXECUTION FINISHED ================" -Level "INFO"
+# --- Script End ---
