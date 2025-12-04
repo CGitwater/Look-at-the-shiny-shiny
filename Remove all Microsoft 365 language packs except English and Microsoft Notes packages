@@ -1,0 +1,49 @@
+# Remove all Microsoft 365 language packs except English and Microsoft Notes packages
+
+# Define languages/packages you want to keep
+$keepLanguages = @("en-us")   # English
+$keepProducts = @("onenote")  # Microsoft Notes (OneNote language packs)
+
+Write-Output "Checking installed Microsoft 365 language packs..."
+
+# Get all installed Click-to-Run Office packages
+$installedProducts = Get-WmiObject -Namespace "root\cimv2\msft" -Class MSFT_Office365_InstalledProduct -ErrorAction SilentlyContinue
+
+if (-not $installedProducts) {
+    Write-Output "No Office 365 Click-to-Run packages detected or WMI class not available."
+    exit
+}
+
+foreach ($product in $installedProducts) {
+    $productName = $product.ProductName.ToLower()
+    $productId   = $product.ID.ToLower()
+
+    # Check if this product should be kept
+    $keep = $false
+    foreach ($lang in $keepLanguages) {
+        if ($productName -match $lang -or $productId -match $lang) {
+            $keep = $true
+        }
+    }
+    foreach ($kp in $keepProducts) {
+        if ($productName -match $kp -or $productId -match $kp) {
+            $keep = $true
+        }
+    }
+
+    if (-not $keep) {
+        Write-Output "Removing language pack: $($product.ProductName) [$($product.ID)]"
+        try {
+            # Use Click-to-Run setup to uninstall
+            Start-Process -FilePath "C:\Program Files\Common Files\Microsoft Shared\ClickToRun\OfficeC2RClient.exe" `
+                          -ArgumentList "/update user updatetoversion=16.0.0000.0000 productid=$($product.ID) remove=true" `
+                          -Wait -NoNewWindow
+        } catch {
+            Write-Warning "Failed to remove $($product.ProductName): $_"
+        }
+    } else {
+        Write-Output "Keeping package: $($product.ProductName) [$($product.ID)]"
+    }
+}
+
+Write-Output "Completed language pack cleanup."
