@@ -1,0 +1,286 @@
+<#
+.SYNOPSIS
+    Deploys a comprehensive set of Windows 11 hardening policies to Microsoft Intune.
+.DESCRIPTION
+    This script programmatically creates and configures multiple, logically-grouped
+    device configuration profiles in Intune. It uses the Settings Catalog for most
+    settings and a Custom OMA-URI profile for legacy/complex settings.
+    
+    The script is idempotent: it will update existing policies or create new ones as needed.
+    All settings have been curated for compatibility with Windows 11 Pro.
+
+    The following policies will be created:
+    - Windows - App & Store Hardening (Settings Catalog)
+    - Windows - Defender & Security Center Hardening (Settings Catalog)
+    - Windows - Firewall Hardening (Settings Catalog)
+    - Windows - OS & Experience Hardening (Settings Catalog)
+    - Windows - Legacy & User Rights (OMA-URI)
+.NOTES
+    Author: CDrinkwater
+    Date: October 26, 2023
+    Version: 4.0 - FINAL - Corrected JSON structure for Settings Catalog policies.
+    Requires: Microsoft.Graph.DeviceManagement module.
+#>
+
+#region Configuration
+$tenant_id = "<Add Azure 365 Tenant ID>" # IMPORTANT: Enter your Azure Tenant ID here. Example: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+#endregion
+
+#region Prerequisite Check & Connection
+if ($tenant_id -eq "" -or $tenant_id -eq "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx") {
+  Write-Host "FATAL: Please configure your Azure tenant id in the script before running." -ForegroundColor Red
+  return
+}
+
+Write-Host "Checking for Microsoft.Graph.DeviceManagement module..." -ForegroundColor Cyan
+$module = Get-Module -ListAvailable -Name Microsoft.Graph.DeviceManagement
+if ($module) {
+    if ($module.Version.Major -lt 2) {
+        write-host "Microsoft.Graph.DeviceManagement module may be outdated and will be updated..." -ForegroundColor Yellow
+        Update-Module Microsoft.Graph.DeviceManagement -Force
+    }
+} 
+else {
+    Write-Host "The Microsoft.Graph.DeviceManagement module is required and will be installed." -ForegroundColor Yellow
+    Install-Module Microsoft.Graph.DeviceManagement -Scope CurrentUser -Repository PSGallery -Force
+}
+
+Import-Module Microsoft.Graph.DeviceManagement
+
+try {
+  Write-Host "Connecting to Microsoft Graph..." -ForegroundColor Cyan
+  Connect-MgGraph -NoWelcome -Scopes "DeviceManagementConfiguration.ReadWrite.All"
+  Write-Host "Connected successfully."
+}
+catch {
+    Write-Host -ForegroundColor Red "FATAL: ERROR connecting to Graph: " $_.Exception.Message
+    return
+}
+#endregion
+
+#region Policy Creation Functions
+
+function Create-AppStorePolicy {
+    $policyName = "Windows - App & Store Hardening"
+    $policyDescription = "Configures settings for Microsoft Store, App Installer, and application runtime security."
+    Write-Host "Processing policy: $policyName"
+    
+    # FIX: Removed the incorrect 'settingInstance' wrapper from each object.
+    $settings = @(
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_appruntime_allowmicrosoftaccountstobeoptional"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_admx_appxruntime_appxruntimeblockhostedappaccesswinrt"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_desktopappinstaller_enableexperimentalfeatures"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 0 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_desktopappinstaller_enablehashoverride"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 0 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_desktopappinstaller_enablemsappinstallerprotocol"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 0 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_admx_pushtoinstall_disablepushtoinstall"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_admx_windowsstore_disableosupgrade_2"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_admx_msi_safeforscripting"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 0 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_applicationmanagement_allowappstoreautoupdate"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_applicationmanagement_allowgamedvr"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 0 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_applicationmanagement_allowshareduserappdata"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 0 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_applicationmanagement_blocknonadminuserinstall"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 0 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_applicationmanagement_disablestoreoriginatedapps"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_applicationmanagement_msialwaysinstallwithelevatedprivileges"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 0 }}
+    )
+    
+    $body = @{
+        "@odata.type" = "#microsoft.graph.deviceManagementConfigurationPolicy"
+        name = $policyName
+        description = $policyDescription
+        platforms = "windows10"
+        technologies = "mdm"
+        settings = $settings
+    }
+
+    Publish-Policy -PolicyName $policyName -Body $body -PolicyType 'SettingsCatalog'
+}
+
+function Create-DefenderPolicy {
+    $policyName = "Windows - Defender & Security Center Hardening"
+    $policyDescription = "Configures Microsoft Defender Antivirus, MAPS, and Security Center settings."
+    Write-Host "Processing policy: $policyName"
+    
+    $settings = @(
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_defender_allowbehaviormonitoring"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_defender_allowemailscanning"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_defender_allowfullscanremovabledrivescanning"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_defender_allowrealtimemonitoring"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_defender_allowioavprotection"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_defender_allowscriptscanning"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_defender_enablenetworkprotection"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_defender_puaprotection"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_windowsdefendersecuritycenter_disallowexploitprotectionoverride"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_admx_microsoftdefenderantivirus_spynet_localsettingoverridespynetreporting"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 0 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_admx_microsoftdefenderantivirus_spynetreporting"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 0 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_admx_microsoftdefenderantivirus_reporting_disablegenericreports"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 0 }}
+    )
+
+    $body = @{
+        "@odata.type" = "#microsoft.graph.deviceManagementConfigurationPolicy"
+        name = $policyName
+        description = $policyDescription
+        platforms = "windows10"
+        technologies = "mdm"
+        settings = $settings
+    }
+    
+    Publish-Policy -PolicyName $policyName -Body $body -PolicyType 'SettingsCatalog'
+}
+
+function Create-FirewallPolicy {
+    $policyName = "Windows - Firewall Hardening"
+    $policyDescription = "Enables and configures the Microsoft Defender Firewall for all network profiles."
+    Write-Host "Processing policy: $policyName"
+
+    $settings = @(
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_firewall_mdmstore_domainprofile_enablefirewall"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementBooleanSettingValue"; "value" = $true }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_firewall_mdmstore_domainprofile_defaultinboundaction"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_firewall_mdmstore_privateprofile_enablefirewall"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementBooleanSettingValue"; "value" = $true }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_firewall_mdmstore_privateprofile_defaultinboundaction"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_firewall_mdmstore_publicprofile_enablefirewall"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementBooleanSettingValue"; "value" = $true }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_firewall_mdmstore_publicprofile_defaultinboundaction"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+    )
+
+    $body = @{
+        "@odata.type" = "#microsoft.graph.deviceManagementConfigurationPolicy"
+        name = $policyName
+        description = $policyDescription
+        platforms = "windows10"
+        technologies = "mdm"
+        settings = $settings
+    }
+    
+    Publish-Policy -PolicyName $policyName -Body $body -PolicyType 'SettingsCatalog'
+}
+
+function Create-OSExperiencePolicy {
+    $policyName = "Windows - OS & Experience Hardening"
+    $policyDescription = "Hardens various OS components including Logon, UAC, Privacy, Experience, and Networking."
+    Write-Host "Processing policy: $policyName"
+
+    $settings = @(
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_experience_allowcortana"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 0 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "user_vendor_msft_policy_config_experience_allowwindowsspotlight"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 0 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_experience_disableconsumeraccountstatecontent"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_privacy_allowinputpersonalization"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 0 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_privacy_disableadvertisingid"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_system_allowlocation"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 0 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_search_allowcloudsearch"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 0 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_localpoliciessecurityoptions_useraccountcontrol_behavioroftheelevationpromptforadministrators"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_localpoliciessecurityoptions_useraccountcontrol_behavioroftheelevationpromptforstandardusers"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_admx_logon_dontenumerateconnectedusers"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 1 }}
+        @{ "@odata.type" = "#microsoft.graph.deviceManagementSettingInstance"; "settingDefinitionId" = "device_vendor_msft_policy_config_credentialproviders_allowpinlogon"; "simpleSettingValue" = @{ "@odata.type" = "#microsoft.graph.deviceManagementIntegerSettingValue"; "value" = 0 }}
+    )
+    
+    $body = @{
+        "@odata.type" = "#microsoft.graph.deviceManagementConfigurationPolicy"
+        name = $policyName
+        description = $policyDescription
+        platforms = "windows10"
+        technologies = "mdm"
+        settings = $settings
+    }
+
+    Publish-Policy -PolicyName $policyName -Body $body -PolicyType 'SettingsCatalog'
+}
+
+function Create-LegacyUserRightsPolicy {
+    $policyName = "Windows - Legacy & User Rights (OMA-URI)"
+    $policyDescription = "Sets complex User Rights Assignments and other legacy settings not available in Settings Catalog."
+    Write-Host "Processing policy: $policyName"
+    
+    $omaSettings = @(
+        @{ "@odata.type" = "#microsoft.graph.omaSettingString"; "displayName" = "User Rights: Deny Access From Network"; "description" = "Guests, Local account"; "omaUri" = "./Device/Vendor/MSFT/Policy/Config/UserRights/DenyAccessFromNetwork"; "value" = "*S-1-5-32-546$([char]0xF000)*S-1-5-113" },
+        @{ "@odata.type" = "#microsoft.graph.omaSettingString"; "displayName" = "User Rights: Deny log on through Remote Desktop Services"; "description" = "Guests, Local account"; "omaUri" = "./Device/Vendor/MSFT/Policy/Config/UserRights/DenyRemoteDesktopServicesLogOn"; "value" = "*S-1-5-32-546$([char]0xF000)*S-1-5-113" },
+        @{ "@odata.type" = "#microsoft.graph.omaSettingString"; "displayName" = "User Rights: Access From Network"; "description" = "Administrators, Remote Desktop Users"; "omaUri" = "./Device/Vendor/MSFT/Policy/Config/UserRights/AccessFromNetwork"; "value" = "*S-1-5-32-544$([char]0xF000)*S-1-5-32-555" },
+        @{ "@odata.type" = "#microsoft.graph.omaSettingString"; "displayName" = "User Rights: Allow log on locally"; "description" = "Administrators, Users"; "omaUri" = "./Device/Vendor/MSFT/Policy/Config/UserRights/AllowLocalLogOn"; "value" = "*S-1-5-32-544$([char]0xF000)*S-1-5-32-545" },
+        @{ "@odata.type" = "#microsoft.graph.omaSettingString"; "displayName" = "Network Provider: Hardened UNC Paths"; "description" = "Enforce signing and integrity on NETLOGON and SYSVOL."; "omaUri" = "./Device/Vendor/MSFT/Policy/Config/Connectivity/HardenedUNCPaths"; "value" = "<enabled/><data id=`"Pol_HardenedPaths`" value=`"\\*\NETLOGON$([char]0xF000)RequireMutualAuthentication=1,RequireIntegrity=1,RequirePrivacy=1$([char]0xF000)\\*\SYSVOL$([char]0xF000)RequireMutualAuthentication=1,RequireIntegrity=1,RequirePrivacy=1`"/>" }
+    )
+
+    $body = @{
+        "@odata.type" = "#microsoft.graph.windows10CustomConfiguration"
+        displayName = $policyName
+        description = $policyDescription
+        omaSettings = $omaSettings
+    }
+
+    Publish-Policy -PolicyName $policyName -Body $body -PolicyType 'CustomOmaUri'
+}
+
+function Publish-Policy {
+    param(
+        [string]$PolicyName,
+        [hashtable]$Body,
+        [string]$PolicyType
+    )
+    
+    try {
+        if ($PolicyType -eq 'SettingsCatalog') {
+            # Use Invoke-MgGraphRequest for Settings Catalog v1.0 endpoint
+            $uri = "v1.0/deviceManagement/configurationPolicies"
+            $response = Invoke-MgGraphRequest -Method GET -Uri "$uri?`$filter=name eq '$PolicyName'"
+            $existingPolicy = $response.value
+
+            if ($existingPolicy) {
+                Write-Host "Policy '$PolicyName' already exists. Updating it..." -ForegroundColor Yellow
+                $policyId = $existingPolicy.id
+                # For update, we only need to patch the settings. Pass the hashtable directly.
+                $updateBody = @{ settings = $Body.settings }
+                Invoke-MgGraphRequest -Method PATCH -Uri "$uri/$policyId" -Body $updateBody -ContentType "application/json" | Out-Null
+                Write-Host "Successfully updated policy '$PolicyName'." -ForegroundColor Green
+            } else {
+                Write-Host "Creating new policy '$PolicyName'..."
+                # For create, pass the full hashtable directly.
+                Invoke-MgGraphRequest -Method POST -Uri $uri -Body $Body -ContentType "application/json" | Out-Null
+                Write-Host "Successfully created policy '$PolicyName'." -ForegroundColor Green
+            }
+        }
+        elseif ($PolicyType -eq 'CustomOmaUri') {
+            # Use standard cmdlets for Custom OMA-URI as they are stable for this type
+            $existingPolicy = Get-MgDeviceManagementDeviceConfiguration -Filter "displayName eq '$PolicyName'"
+            if ($existingPolicy) {
+                Write-Host "Policy '$PolicyName' already exists. Updating it..." -ForegroundColor Yellow
+                Update-MgDeviceManagementDeviceConfiguration -DeviceConfigurationId $existingPolicy.Id -BodyParameter $Body | Out-Null
+                Write-Host "Successfully updated policy '$PolicyName'." -ForegroundColor Green
+            } else {
+                Write-Host "Creating new policy '$PolicyName'..."
+                New-MgDeviceManagementDeviceConfiguration -BodyParameter $Body | Out-Null
+                Write-Host "Successfully created policy '$PolicyName'." -ForegroundColor Green
+            }
+        }
+    }
+    catch {
+        Write-Host -ForegroundColor Red "ERROR processing policy '$PolicyName': " $_.Exception.Message
+        if ($_.ErrorDetails) {
+            $errorDetail = $_.ErrorDetails.Message | ConvertFrom-Json -ErrorAction SilentlyContinue
+            if ($errorDetail) {
+                Write-Host -ForegroundColor Red ("Details: " + $errorDetail.error.message)
+            }
+        }
+    }
+}
+
+#endregion
+
+#region Main Execution
+try {
+    Write-Host "Starting policy deployment..." -ForegroundColor Cyan
+    
+    Create-AppStorePolicy
+    Create-DefenderPolicy
+    Create-FirewallPolicy
+    Create-OSExperiencePolicy
+    Create-LegacyUserRightsPolicy
+
+    Write-Host "All policies have been processed. Please review them in the Intune portal and assign them to your device groups." -ForegroundColor Cyan
+}
+catch {
+    Write-Host -ForegroundColor Red "An unexpected error occurred during main execution: " $_.Exception.Message
+}
+finally {
+    if (Get-MgContext) {
+        Disconnect-MgGraph
+        Write-Host "Disconnected from Microsoft Graph."
+    }
+}
+#endregion
