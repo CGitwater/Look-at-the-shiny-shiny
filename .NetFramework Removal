@@ -1,0 +1,24 @@
+#### Removes Older versions of .Netframework under Version 8 ####
+
+# Define target EXE patterns
+$runtimePatterns = @(
+    "windowsdesktop-runtime-*-win-*.exe",
+    "aspnetcore-runtime-*-win-*.exe",
+    "dotnet-runtime-*-win-*.exe"
+)
+
+# Search for runtime installers under version 8
+$runtimeExes = foreach ($pattern in $runtimePatterns) {
+    Get-ChildItem -Path "C:\ProgramData\Package Cache\" -Recurse -Filter $pattern -ErrorAction SilentlyContinue | Where-Object {
+        if ($_ -match "([a-z\-]+)-(\d+\.\d+\.\d+)-win-(x86|x64)\.exe") {
+            $version = [version]$matches[2]
+            return $version -lt [version]"8.0.0"
+        }
+        return $false
+    }
+}
+
+# Uninstall each found runtime silently
+foreach ($exe in $runtimeExes) {
+    Start-Process -FilePath $exe.FullName -ArgumentList "/uninstall /quiet /norestart" -Wait
+}
