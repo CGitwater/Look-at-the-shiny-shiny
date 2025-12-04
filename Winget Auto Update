@@ -1,0 +1,28 @@
+# Winget Auto Update Script Installer
+
+$taskName = "WingetAutoUpdate"
+$folderPath = "$env:ProgramData\winget"
+$scriptPath = "$folderPath\WingetAutoUpdate.ps1"
+
+# Ensure the folder exists
+if (-not (Test-Path -Path $folderPath)) {
+    New-Item -Path $folderPath -ItemType Directory -Force
+}
+
+# Create the update script
+$updateScript = @"
+winget upgrade --all --silent --accept-package-agreements --accept-source-agreements
+"@
+Set-Content -Path $scriptPath -Value $updateScript -Encoding UTF8
+
+# Scheduled Task Config
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
+$trigger = New-ScheduledTaskTrigger -Daily -DaysInterval 3 -At 10:00AM
+$principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+
+# Register the Task (clean up old if exists)
+try {
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+} catch {}
+
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Description "Automatically updates apps via winget every 3 days"
