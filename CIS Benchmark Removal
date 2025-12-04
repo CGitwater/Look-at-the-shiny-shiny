@@ -1,0 +1,433 @@
+<#
+.SYNOPSIS
+    This script reverts local machine settings applied by the CIS Baseline OMA-URI policy.
+    It does NOT interact with or delete anything from the Intune service.
+
+.DESCRIPTION
+    This script is designed to be run locally on a Windows 11 machine with Administrator rights.
+    It undoes the changes made by a specific Intune configuration profile by deleting the corresponding
+    registry keys created by the MDM agent. This will cause the settings to revert to Windows defaults
+    or their pre-policy state.
+
+    This is the appropriate action to take on a device AFTER a policy has been unassigned from the user/device in Intune.
+
+.NOTES
+    - MUST BE RUN AS ADMINISTRATOR.
+    - A system reboot is strongly recommended after running the script to ensure all settings are fully reverted.
+    - This script is targeted and should only affect the specific settings defined in the original policy.
+
+.Author: CDrinkwater
+.Date: 22/06/2025
+
+#>
+
+#================================================================================
+# PRE-FLIGHT CHECKS
+#================================================================================
+
+# Check for Administrator privileges
+if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Warning "This script must be run as an Administrator. Please re-run from an elevated PowerShell prompt."
+    # Pause to allow user to read the message if double-clicked
+    if ($Host.Name -eq "ConsoleHost") {
+        Read-Host "Press Enter to exit"
+    }
+    Exit
+}
+
+Write-Host "Starting local policy cleanup for CIS Baseline..." -ForegroundColor Cyan
+
+#================================================================================
+# DEFINE OMA-URIS TO BE REMOVED
+#================================================================================
+
+# This array contains the 'path' part of every OMA-URI from the original script.
+$omaUrisToRemove = @(
+    "AboveLock/AllowCortanaAboveLock",
+    "DeviceLock/PreventEnablingLockScreenCamera",
+    "DeviceLock/PreventLockScreenSlideShow",
+    "MSSecurityGuide/ApplyUACRestrictionsToLocalAccountsOnNetworkLogon",
+    "MSSecurityGuide/ConfigureSMBV1ClientDriver",
+    "MSSecurityGuide/ConfigureSMBV1Server",
+    "MSSecurityGuide/EnableStructuredExceptionHandlingOverwriteProtection",
+    "MSSecurityGuide/WDigestAuthentication",
+    "ADMX_MSS-legacy/Pol_MSS_AutoAdminLogon",
+    "MSSLegacy/IPv6SourceRoutingProtectionLevel",
+    "MSSLegacy/IPSourceRoutingProtectionLevel",
+    "ADMX_MSS-legacy/Pol_MSS_DisableSavePassword",
+    "MSSLegacy/AllowICMPRedirectsToOverrideOSPFGeneratedRoutes",
+    "ADMX_MSS-legacy/Pol_MSS_KeepAliveTime",
+    "MSSLegacy/AllowTheComputerToIgnoreNetBIOSNameReleaseRequestsExceptFromWINSServers",
+    "ADMX_MSS-legacy/Pol_MSS_PerformRouterDiscovery",
+    "ADMX_MSS-legacy/Pol_MSS_SafeDllSearchMode",
+    "ADMX_MSS-legacy/Pol_MSS_ScreenSaverGracePeriod",
+    "ADMX_MSS-legacy/Pol_MSS_TcpMaxDataRetransmissionsIPv6",
+    "ADMX_MSS-legacy/Pol_MSS_TcpMaxDataRetransmissions",
+    "ADMX_MSS-legacy/Pol_MSS_WarningLevel",
+    "ADMX_DnsClient/Turn_Off_Multicast",
+    "ADMX_LinkLayerTopologyDiscovery/LLTD_EnableLLTDIO",
+    "ADMX_LinkLayerTopologyDiscovery/LLTD_EnableRspndr",
+e   "Connectivity/ProhibitInstallationAndConfigurationOfNetworkBridge",
+    "ADMX_NetworkConnections/NC_ShowSharedAccessUI",
+    "ADMX_NetworkConnections/NC_StdDomainUserSetLocation",
+    "Connectivity/HardenedUNCPaths",
+    "ADMX_WindowsConnectNow/WCN_EnableRegistrar",
+    "ADMX_WindowsConnectNow/WCN_DisableWcnUi_2",
+    "ADMX_WCM/WCM_MinimizeConnections",
+    "WindowsConnectionManager/ProhitConnectionToNonDomainNetworksWhenConnectedToDomainAuthenticatedNetwork",
+    "WirelessDisplay/RequirePinForPairing",
+    "ADMX_wlansvc/SetPINEnforced",
+    "ADMX_Printing2/RegisterSpoolerRemoteRpcEndPoint",
+    "Printers/PointAndPrintRestrictions",
+    "AboveLock/AllowToasts",
+    "ADMX_AuditSettings/IncludeCmdLine",
+    "ADMX_CredSsp/AllowEncryptionOracle",
+    "CredentialsDelegation/RemoteHostAllowsDelegationOfNonExportableCredentials",
+    "DeviceInstallation/PreventDeviceMetadataFromNetwork",
+    "System/BootStartDriverInitialization",
+    "ADMX_GroupPolicy/CSE_Registry",
+    "ADMX_GroupPolicy/CSE_Security",
+    "ADMX_GroupPolicy/EnableCDP",
+    "ADMX_GroupPolicy/DisableBackgroundPolicy",
+    "ADMX_ICM/ShellNoUseStoreOpenWith_2",
+    "Connectivity/DisableDownloadingOfPrintDriversOverHTTP",
+    "ADMX_HelpAndSupport/HPImplicitFeedback",
+    "ADMX_ICM/NC_ExitOnISP",
+    "Connectivity/DisableInternetDownloadForWebPublishingAndOnlineOrderingWizards",
+    "Connectivity/DiablePrintingOverHTTP",
+    "ADMX_ICM/NC_NoRegistration",
+    "ADMX_ICM/SearchCompanion_DisableFileUpdates",
+    "ADMX_ICM/ShellRemoveOrderPrints_2",
+    "ADMX_ICM/ShellRemovePublishToWeb_2",
+    "ADMX_ICM/WinMSG_NoInstrumentation_2",
+    "ADMX_ICM/CEIPEnable",
+    "ADMX_ICM/PCH_DoNotReport",
+    "ADMX_Kerberos/DevicePKInitEnabled",
+    "ADMX_Globalization/BlockUserInputMethodsForSignIn",
+    "ADMX_Logon/BlockUserFromShowingAccountDetailsOnSignin",
+    "WindowsLogon/DontDisplayNetworkSelectionUI",
+    "ADMX_Logon/DontEnumerateConnectedUsers",
+    "WindowsLogon/EnumerateLocalUsersOnDomainJoinedComputers",
+    "WindowsLogon/DisableLockScreenAppNotifications",
+    "CredentialProviders/BlockPicturePassword",
+    "CredentialProviders/AllowPINLogon",
+    "ADMX_Power/DCConnectivityInStandby_2",
+    "ADMX_Power/ACConnectivityInStandby_2",
+    "Power/AllowStandbyStatesWhenSleepingOnBattery",
+    "Power/AllowStandbyWhenSleepingPluggedIn",
+    "Power/RequirePasswordWhenComputerWakesOnBattery",
+    "Power/RequirePasswordWhenComputerWakesPluggedIn",
+    "RemoteAssistance/UnsolicitedRemoteAssistance",
+    "RemoteAssistance/SolicitedRemoteAssistance",
+    "RemoteProcedureCall/RPCEndpointMapperClientAuthentication",
+    "RemoteProcedureCall/RestrictUnauthenticatedRPCClients",
+    "ADMX_MSDT/MsdtSupportProvider",
+    "ADMX_W32Time/W32TIME_POLICY_ENABLE_NTPCLIENT",
+    "ADMX_W32Time/W32TIME_POLICY_ENABLE_NTPSERVER",
+    "AppRuntime/AllowMicrosoftAccountsToBeOptional",
+    "ADMX_AppXRuntime/AppxRuntimeBlockHostedAppAccessWinRT",
+    "AttachmentManager/DoNotPreserveZoneInformation",
+    "AttachmentManager/NotifyAntivirusPrograms",
+    "Autoplay/DisallowAutoplayForNonVolumeDevices",
+    "Autoplay/SetDefaultAutoRunBehavior",
+    "Autoplay/TurnOffAutoPlay",
+    "CredentialsUI/DisablePasswordReveal",
+    "CredentialsUI/EnumerateAdministrators",
+    "ADMX_CredUI/NoLocalPasswordResetQuestions",
+    "EventLogService/ControlEventLogBehavior",
+    "EventLogService/SpecifyMaximumFileSizeApplicationLog",
+    "ADMX_EventLog/Channel_Log_Retention_2",
+    "EventLogService/SpecifyMaximumFileSizeSecurityLog",
+    "ADMX_EventLog/Channel_Log_Retention_3",
+    "ADMX_EventLog/Channel_LogMaxSize_3",
+    "ADMX_EventLog/Channel_Log_Retention_4",
+    "EventLogService/SpecifyMaximumFileSizeSystemLog",
+    "SmartScreen/EnableSmartScreenInShell",
+    "SmartScreen/PreventOverrideForFilesInShell",
+    "Browser/AllowSmartScreen",
+    "Browser/PreventSmartScreenPromptOverride",
+    "Browser/PreventSmartScreenPromptOverrideForFiles",
+    "ADMX_WindowsExplorer/EnableSmartScreen",
+    "FileExplorer/TurnOffDataExecutionPreventionForExplorer",
+    "FileExplorer/TurnOffHeapTerminationOnCorruption",
+    "ADMX_WindowsExplorer/ShellProtocolProtectedModeTitle_2",
+    "ADMX_Sharing/DisableHomeGroup",
+    "ADMX_MSAPolicy/MicrosoftAccount_DisableUserAuth",
+    "ADMX_MicrosoftDefenderAntivirus/Spynet_LocalSettingOverrideSpynetReporting",
+    "ADMX_MicrosoftDefenderAntivirus/SpynetReporting",
+    "ADMX_MicrosoftDefenderAntivirus/Reporting_DisablegenericrePorts",
+    "ADMX_MicrosoftDefenderAntivirus/DisableAntiSpywareDefender",
+    "ADMX_Sharing/NoInplaceSharing",
+    "ADMX_PushToInstall/DisablePushToInstall",
+    "RemoteDesktopServices/DoNotAllowPasswordSaving",
+    "RemoteDesktopServices/AllowUsersToConnectRemotely",
+    "ADMX_TerminalServer/TS_CLIENT_COM",
+    "RemoteDesktopServices/DoNotAllowDriveRedirection",
+    "ADMX_TerminalServer/TS_CLIENT_LPT",
+    "ADMX_TerminalServer/TS_CLIENT_PNP",
+    "RemoteDesktopServices/PromptForPasswordUponConnection",
+    "RemoteDesktopServices/RequireSecureRPCCommunication",
+    "ADMX_TerminalServer/TS_SECURITY_LAYER_POLICY",
+    "ADMX_TerminalServer/TS_USER_AUTHENTICATION_POLICY",
+    "RemoteDesktopServices/ClientConnectionEncryptionLevel",
+    "ADMX_TerminalServer/TS_SESSIONS_Idle_Limit_2",
+    "ADMX_TerminalServer/TS_SESSIONS_Disconnected_Timeout_2",
+    "ADMX_TerminalServer/TS_TEMP_DELETE",
+    "InternetExplorer/DisableEnclosureDownloading",
+    "ADMX_WindowsStore/DisableOSUpgrade_2",
+    "ADMX_WindowsStore/RemoveWindowsStore_2",
+    "ADMX_MSI/SafeForScripting",
+    "WindowsLogon/AllowAutomaticRestartSignOn",
+    "ADMX_WindowsMediaPlayer/PolicyCodecUpdate",
+    "WindowsPowerShell/TurnOnPowerShellScriptBlockLogging",
+    "ADMX_PowerShellExecutionPolicy/EnableTranscripting",
+    "RemoteManagement/AllowBasicAuthentication_Client",
+    "RemoteManagement/AllowUnencryptedTraffic_Client",
+    "RemoteManagement/DisallowDigestAuthentication",
+    "RemoteManagement/AllowBasicAuthentication_Service",
+    "RemoteManagement/AllowRemoteServerManagement",
+    "RemoteManagement/AllowUnencryptedTraffic_Service",
+    "RemoteManagement/DisallowStoringOfRunAsCredentials",
+    "RemoteShell/AllowRemoteShellAccess",
+    "Audit/AccountLogon_AuditCredentialValidation",
+    "Audit/AccountLogonLogoff_AuditAccountLockout",
+    "Audit/AccountLogonLogoff_AuditGroupMembership",
+    "Audit/AccountLogonLogoff_AuditLogoff",
+    "Audit/AccountLogonLogoff_AuditLogon",
+    "Audit/AccountManagement_AuditApplicationGroupManagement",
+    "Audit/PolicyChange_AuditAuthenticationPolicyChange",
+    "Audit/PolicyChange_AuditAuthorizationPolicyChange",
+    "Audit/ObjectAccess_AuditFileShare",
+    "Audit/AccountLogonLogoff_AuditOtherLogonLogoffEvents",
+    "Audit/AccountManagement_AuditSecurityGroupManagement",
+    "Audit/System_AuditSecuritySystemExtension",
+    "Audit/AccountLogonLogoff_AuditSpecialLogon",
+    "Audit/AccountManagement_AuditUserAccountManagement",
+    "Audit/DetailedTracking_AuditPNPActivity",
+    "Audit/DetailedTracking_AuditProcessCreation",
+    "Audit/ObjectAccess_AuditDetailedFileShare",
+    "Audit/ObjectAccess_AuditOtherObjectAccessEvents",
+    "Audit/ObjectAccess_AuditRemovableStorage",
+    "Audit/PolicyChange_AuditMPSSVCRuleLevelPolicyChange",
+    "Audit/PolicyChange_AuditOtherPolicyChangeEvents",
+    "Audit/PrivilegeUse_AuditSensitivePrivilegeUse",
+    "Audit/System_AuditIPsecDriver",
+    "Audit/System_AuditOtherSystemEvents",
+    "Audit/System_AuditSecurityStateChange",
+    "Audit/System_AuditSystemIntegrity",
+    "Camera/AllowCamera",
+    "Defender/AllowBehaviorMonitoring",
+    "Defender/AllowEmailScanning",
+    "Defender/AllowFullScanRemovableDriveScanning",
+    "Defender/AllowRealtimeMonitoring",
+    "Defender/AllowIOAVProtection",
+    "Defender/AllowScriptScanning",
+    "Defender/Configuration/EnableFileHashComputation",
+    "Defender/EnableNetworkProtection",
+    "Defender/PUAProtection",
+    "DeliveryOptimization/DODownloadMode",
+    "DeviceGuard/EnableVirtualizationBasedSecurity",
+    "DeviceGuard/ConfigureSystemGuardLaunch",
+    "DeviceGuard/RequirePlatformSecurityFeatures",
+    "DeviceGuard/LsaCfgFlags",
+    "DeviceLock/DevicePasswordEnabled",
+    "DeviceLock/AlphanumericDevicePasswordRequired",
+    "DeviceLock/DevicePasswordExpiration",
+    "DeviceLock/DevicePasswordHistory",
+    "DeviceLock/MinDevicePasswordComplexCharacters",
+    "DeviceLock/MinDevicePasswordLength",
+    "DeviceLock/MinimumPasswordAge",
+    "Experience/AllowCortana",
+    "Experience/AllowSpotlightCollection",
+    "Experience/AllowWindowsSpotlight",
+    "Experience/DisableConsumerAccountStateContent",
+    "Experience/DoNotShowFeedbackNotifications",
+    "LanmanWorkstation/EnableInsecureGuestLogons",
+    "Licensing/DisallowKMSClientOnlineAVSValidation",
+    "LocalPoliciesSecurityOptions/Accounts_BlockMicrosoftAccounts",
+    "LocalPoliciesSecurityOptions/Accounts_EnableGuestAccountStatus",
+    "LocalPoliciesSecurityOptions/Accounts_LimitLocalAccountUseOfBlankPasswordsToConsoleLogonOnly",
+    "LocalPoliciesSecurityOptions/Accounts_RenameAdministratorAccount",
+    "LocalPoliciesSecurityOptions/Accounts_RenameGuestAccount",
+    "LocalPoliciesSecurityOptions/Devices_PreventUsersFromInstallingPrinterDriversWhenConnectingToSharedPrinters",
+    "LocalPoliciesSecurityOptions/InteractiveLogon_DoNotDisplayLastSignedIn",
+    "LocalPoliciesSecurityOptions/InteractiveLogon_DoNotRequireCTRLALTDEL",
+    # "LocalPoliciesSecurityOptions/InteractiveLogon_MachineInactivityLimit", # This setting might be controlled by another policy, use caution.
+    "LocalPoliciesSecurityOptions/InteractiveLogon_MessageTextForUsersAttemptingToLogOn",
+    "LocalPoliciesSecurityOptions/InteractiveLogon_MessageTitleForUsersAttemptingToLogOn",
+    "LocalPoliciesSecurityOptions/MicrosoftNetworkClient_DigitallySignCommunicationsAlways",
+    "LocalPoliciesSecurityOptions/MicrosoftNetworkClient_DigitallySignCommunicationsIfServerAgrees",
+    "LocalPoliciesSecurityOptions/MicrosoftNetworkClient_SendUnencryptedPasswordToThirdPartySMBServers",
+    "LocalPoliciesSecurityOptions/MicrosoftNetworkServer_DigitallySignCommunicationsAlways",
+    "LocalPoliciesSecurityOptions/MicrosoftNetworkServer_DigitallySignCommunicationsIfClientAgrees",
+    "LocalPoliciesSecurityOptions/NetworkAccess_DoNotAllowAnonymousEnumerationOfSAMAccounts",
+    "LocalPoliciesSecurityOptions/NetworkAccess_DoNotAllowAnonymousEnumerationOfSAMAccountsAndShares",
+    "LocalPoliciesSecurityOptions/NetworkAccess_RestrictAnonymousAccessToNamedPipesAndShares",
+    "LocalPoliciesSecurityOptions/NetworkAccess_RestrictClientsAllowedToMakeRemoteCallsToSAM",
+    "LocalPoliciesSecurityOptions/NetworkSecurity_AllowLocalSystemToUseComputerIdentityForNTLM",
+    "LocalPoliciesSecurityOptions/NetworkSecurity_AllowPKU2UAuthenticationRequests",
+    "LocalPoliciesSecurityOptions/NetworkSecurity_DoNotStoreLANManagerHashValueOnNextPasswordChange",
+    "LocalPoliciesSecurityOptions/NetworkSecurity_LANManagerAuthenticationLevel",
+    "LocalPoliciesSecurityOptions/NetworkSecurity_MinimumSessionSecurityForNTLMSSPBasedClients",
+    "LocalPoliciesSecurityOptions/NetworkSecurity_MinimumSessionSecurityForNTLMSSPBasedServers",
+    "LocalPoliciesSecurityOptions/NetworkSecurity_RestrictNTLM_AuditIncomingNTLMTraffic",
+    "LocalPoliciesSecurityOptions/UserAccountControl_BehaviorOfTheElevationPromptForAdministrators",
+    "LocalPoliciesSecurityOptions/UserAccountControl_BehaviorOfTheElevationPromptForStandardUsers",
+    "LocalPoliciesSecurityOptions/UserAccountControl_DetectApplicationInstallationsAndPromptForElevation",
+    "LocalPoliciesSecurityOptions/UserAccountControl_OnlyElevateUIAccessApplicationsThatAreInstalledInSecureLocations",
+    "LocalPoliciesSecurityOptions/UserAccountControl_UseAdminApprovalMode",
+    "LocalPoliciesSecurityOptions/UserAccountControl_SwitchToTheSecureDesktopWhenPromptingForElevation",
+    "LocalPoliciesSecurityOptions/UserAccountControl_RunAllAdministratorsInAdminApprovalMode",
+    "LocalPoliciesSecurityOptions/UserAccountControl_VirtualizeFileAndRegistryWriteFailuresToPerUserLocations",
+    "ApplicationManagement/AllowAppStoreAutoUpdate",
+    "ApplicationManagement/AllowGameDVR",
+    "ApplicationManagement/DisableStoreOriginatedApps",
+    "ApplicationManagement/MSIAllowUserControlOverInstall",
+    "ApplicationManagement/MSIAlwaysInstallWithElevatedPrivileges",
+    "Privacy/AllowCrossDeviceClipboard",
+    "Privacy/AllowInputPersonalization",
+    "Privacy/DisableAdvertisingID",
+    "Privacy/LetAppsActivateWithVoiceAboveLock",
+    "Privacy/UploadUserActivities",
+    "Search/AllowCloudSearch",
+    "Search/AllowIndexingEncryptedStoresOrItems",
+    "Search/AllowSearchToUseLocation",
+    "Search/AllowSearchHighlights",
+    "Settings/AllowOnlineTips",
+    "WebThreatDefense/NotifyMalicious",
+    "WebThreatDefense/NotifyPasswordReuse",
+    "WebThreatDefense/NotifyUnsafeApp",
+    "WebThreatDefense/ServiceEnabled",
+    "System/AllowTelemetry",
+    "System/AllowFontProviders",
+    "System/DisableOneDriveFileSync",
+    "System/EnableOneSettingsAuditing",
+    "System/LimitDiagnosticLogCollection",
+    "System/LimitDumpCollection",
+    "UserRights/AccessFromNetwork",
+    "UserRights/AllowLocalLogOn",
+    "UserRights/BackupFilesAndDirectories",
+    "UserRights/ChangeSystemTime",
+    "UserRights/CreateGlobalObjects",
+    "UserRights/CreatePageFile",
+    "UserRights/CreateSymbolicLinks",
+    "UserRights/DebugPrograms",
+    "UserRights/DenyAccessFromNetwork",
+    "UserRights/DenyLocalLogOn",
+    "UserRights/DenyRemoteDesktopServicesLogOn",
+    "UserRights/GenerateSecurityAudits",
+    "UserRights/ImpersonateClient",
+    "UserRights/IncreaseSchedulingPriority",
+    "UserRights/LoadUnloadDeviceDrivers",
+    "UserRights/ManageAuditingAndSecurityLog",
+    "UserRights/ManageVolume",
+    "UserRights/ModifyFirmwareEnvironment",
+    "UserRights/ProfileSingleProcess",
+    "UserRights/RemoteShutdown",
+    "UserRights/RestoreFilesAndDirectories",
+    "UserRights/TakeOwnership",
+    "VirtualizationBasedTechnology/HypervisorEnforcedCodeIntegrity",
+    "VirtualizationBasedTechnology/RequireUEFIMemoryAttributesTable",
+    "NewsAndInterests/AllowNewsAndInterests",
+    "WindowsDefenderSecurityCenter/DisallowExploitProtectionOverride",
+    "PassportForWork/Biometrics/FacialFeaturesUseEnhancedAntiSpoofing",
+    "PassportForWork/$($tenant_id)/Policies/PINComplexity/MinimumPINLength",
+    "PassportForWork/$($tenant_id)/Policies/RequireSecurityDevice",
+    "WindowsInkWorkspace/AllowSuggestedAppsInWindowsInkWorkspace",
+    "WindowsInkWorkspace/AllowWindowsInkWorkspace",
+    "Update/AllowAutoUpdate",
+    "Update/DeferFeatureUpdatesPeriodInDays",
+    "Update/DeferQualityUpdatesPeriodInDays",
+    "Update/ManagePreviewBuilds",
+    "Update/ScheduledInstallDay",
+    "Update/SetDisablePauseUXAccess",
+    "ApplicationManagement/AllowSharedUserAppData",
+    "Wifi/AllowAutoConnectToWiFiSenseHotspots",
+    "System/DisableEnterpriseAuthProxy",
+    "DmaGuard/DeviceEnumerationPolicy",
+    "ApplicationManagement/BlockNonAdminUserInstall",
+    "System/AllowLocation",
+    "Experience/AllowWindowsConsumerFeatures",
+    "Notifications/DisallowCloudNotification"
+)
+
+# Base registry path for MDM policies
+$baseRegPath = "HKLM:\SOFTWARE\Microsoft\PolicyManager\default"
+
+#================================================================================
+# PROCESS STANDARD OMA-URI MAPPED REGISTRY KEYS
+#================================================================================
+Write-Host "Processing standard PolicyManager registry keys..." -ForegroundColor Cyan
+foreach ($uri in $omaUrisToRemove) {
+    $fullRegPath = Join-Path -Path $baseRegPath -ChildPath $uri
+    
+    # Check if the policy key exists
+    if (Test-Path -Path $fullRegPath) {
+        try {
+            Write-Host "  [FOUND] Deleting registry key for: $uri" -ForegroundColor Yellow
+            Remove-Item -Path $fullRegPath -Recurse -Force -ErrorAction Stop
+        }
+        catch {
+            Write-Warning "  [ERROR] Could not delete key: $fullRegPath. Error: $($_.Exception.Message)"
+        }
+    }
+    else {
+        # Write-Host "  [NOT FOUND] Skipping: $uri" # Uncomment for very verbose logging
+    }
+}
+Write-Host "Standard key processing complete." -ForegroundColor Green
+
+#================================================================================
+# HANDLE SPECIAL CASES
+#================================================================================
+
+# --- 1. Windows LAPS Policies ---
+Write-Host "Processing special case: Windows LAPS registry keys..." -ForegroundColor Cyan
+$lapsRegPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\LAPS\Config"
+if(Test-Path -Path $lapsRegPath){
+    try {
+        Write-Host "  [FOUND] Deleting LAPS configuration key: $lapsRegPath" -ForegroundColor Yellow
+        Remove-Item -Path $lapsRegPath -Recurse -Force -ErrorAction Stop
+        Write-Host "LAPS configuration key deleted." -ForegroundColor Green
+    } catch {
+        Write-Warning "  [ERROR] Could not delete LAPS key: $lapsRegPath. Error: $($_.Exception.Message)"
+    }
+} else {
+    Write-Host "  [NOT FOUND] LAPS configuration not present."
+}
+
+# --- 2. Firewall Policies ---
+Write-Host "Processing special case: Windows Defender Firewall..." -ForegroundColor Cyan
+Write-Warning "This script will now reset the Windows Defender Firewall to its default settings."
+Write-Warning "This will remove ALL custom firewall rules. This is the most reliable way to undo the CIS policy."
+$confirmation = Read-Host "Do you want to proceed with resetting the firewall? (y/n)"
+if ($confirmation -eq 'y') {
+    try {
+        Write-Host "  Resetting firewall..." -ForegroundColor Yellow
+        netsh advfirewall reset | Out-Null
+        Write-Host "  Windows Defender Firewall has been reset to defaults." -ForegroundColor Green
+    }
+    catch {
+        Write-Warning "  [ERROR] Failed to reset the firewall."
+    }
+}
+else {
+    Write-Host "  Firewall reset skipped by user." -ForegroundColor Yellow
+}
+
+
+#================================================================================
+# COMPLETION
+#================================================================================
+
+Write-Host ""
+Write-Host "****************************************************************" -ForegroundColor Green
+Write-Host "              Local Policy Cleanup is Complete" -ForegroundColor Green
+Write-Host "****************************************************************" -ForegroundColor Green
+Write-Host ""
+Write-Warning "A REBOOT IS STRONGLY RECOMMENDED to ensure all settings are fully reverted."
+Write-Host ""
+
+if ($Host.Name -eq "ConsoleHost") {
+    Read-Host "Press Enter to exit"
+}
