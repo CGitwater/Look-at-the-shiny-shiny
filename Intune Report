@@ -1,0 +1,200 @@
+# Connect to Microsoft Graph
+Connect-MgGraph -ClientId <Application ID> -TenantId <tenant ID> -scopes "User.ReadWrite.All","Device.ReadWrite.All","DeviceManagementConfiguration.ReadWrite.All","DeviceManagementServiceConfig.ReadWrite.All","DeviceManagementConfiguration.ReadWrite.All"
+
+# Get licenses
+$licenses = Get-MgSubscribedSku | Select-Object -Property AccountName,AppliesTo,ConsumedUnits,SkuId,SkuPartNumber
+
+# Licence Count
+$licensecount = $licenses.Count
+
+# Get all users with extended information
+$users = Get-MgUser -All | Select-Object -Property ID, DisplayName, Mail, UserPrincipalName
+
+# User Count
+$usersCount = $users.Count
+
+# Get all devices
+$devices = Get-MgDevice | Select-Object -Property DisplayName,DeviceId,EnrollmentProfileName,ApproximateLastSignInDateTime,AccountEnabled,DeviceOwnership,DeviceVersion
+
+# Device Count
+$devicesCount = $devices.Count
+
+# Get all Autopilot policies
+$autopilotPolicies = Get-MgBetaDeviceManagement | Select-Object -Property ID,DisplayName,DeviceComplianceReportSummarizationDateTime,IntuneAccountId,LastReportAggregationDateTime
+
+# Get all Autopilot Devices 
+$autopilotdevices  = Get-MgDeviceManagementWindowsAutopilotDeviceIdentity  | Select-Object -Property groupTag,purchaseOrderIdentifier,serialNumber,productKey,manufacturer,model,enrollmentState,lastContactedDateTime
+
+# Get all Intune configuration profiles
+$intuneConfigurationProfiles = Get-MgBetaDeviceManagementDeviceConfiguration | Select-Object -Property DisplayName,CreatedDateTime,LastModifiedDateTime,SupportsScopeTags,Version
+
+# Get all Conditional Access Policies
+$Policies = Get-MgIdentityConditionalAccessPolicy | Select-object -Property DisplayName,CreatedDateTime,ModifiedDateTime,State
+
+# Create HTML output with CSS styling
+$html = @"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Intune Report</title>
+<style>
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f3f2f1;
+    margin: 0;
+    padding: 20px;
+}
+.container {
+    max-width: 1200px;
+    margin: auto;
+}
+h1 {
+    color: #0078d4;
+}
+h2 {
+    color: #0078d4;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+}
+table, th, td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+}
+th {
+    background-color: #f2f2f2;
+    color: #333;
+}
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>Microsoft Graph Report</h1>
+
+    <h2>Licenses ($licensecount)</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Account Name</th>
+                <th>Applies To</th>
+                <th>Consumed Units</th>
+                <th>Sku ID</th>
+                <th>Sku Part Number</th>
+            </tr>
+        </thead>
+        <tbody>
+            $($licenses | ConvertTo-Html -Fragment)
+        </tbody>
+    </table>
+
+    <h2>Users ($usersCount)</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Display Name</th>
+                <th>Mail</th>
+                <th>User Principal Name</th>
+            </tr>
+        </thead>
+        <tbody>
+            $($users | ConvertTo-Html -Fragment)
+        </tbody>
+    </table>
+
+    <h2>Devices ($devicesCount)</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Display Name</th>
+                <th>Device ID</th>
+                <th>Enrollment Profile Name</th>
+                <th>Last Sign-In Date Time</th>
+                <th>Account Enabled</th>
+                <th>Device Ownership</th>
+                <th>Device Version</th>
+            </tr>
+        </thead>
+        <tbody>
+            $($devices | ConvertTo-Html -Fragment)
+        </tbody>
+    </table>
+
+    <h2>Autopilot Policies</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Display Name</th>
+                <th>Device Compliance Report Summarization Date Time</th>
+                <th>Intune Account ID</th>
+                <th>Last Report Aggregation Date Time</th>
+            </tr>
+        </thead>
+        <tbody>
+            $($autopilotPolicies | ConvertTo-Html -Fragment)
+        </tbody>
+    </table>
+
+    <h2>Autopilot Devices</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Group Tag</th>
+                <th>Purchase Order Identifier</th>
+                <th>Serial Number</th>
+                <th>Product Key</th>
+                <th>Manufacturer</th>
+                <th>Model</th>
+                <th>Enrollment State</th>
+                <th>Last Contacted Date Time</th>
+            </tr>
+        </thead>
+        <tbody>
+            $($autopilotdevices | ConvertTo-Html -Fragment)
+        </tbody>
+    </table>
+
+    <h2>Intune Configuration Profiles</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Display Name</th>
+                <th>Created Date Time</th>
+                <th>Last Modified Date Time</th>
+                <th>Supports Scope Tags</th>
+                <th>Version</th>
+            </tr>
+        </thead>
+        <tbody>
+            $($intuneConfigurationProfiles | ConvertTo-Html -Fragment)
+        </tbody>
+    </table>
+
+    <h2>Conditional Access Policies</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Display Name</th>
+                <th>Created Date Time</th>
+                <th>Modified Date Time</th>
+                <th>State</th>
+            </tr>
+        </thead>
+        <tbody>
+            $($Policies | ConvertTo-Html -Fragment)
+        </tbody>
+    </table>
+</div>
+</body>
+</html>
+"@
+
+# Output HTML to file
+$html | Out-File -FilePath "C:\Intune Report.html" -Encoding UTF8
+Write-Host "HTML report generated successfully."
