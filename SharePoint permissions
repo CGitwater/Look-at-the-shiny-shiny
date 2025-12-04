@@ -1,0 +1,142 @@
+<#
+.SYNOPSIS
+    Generates a CSV report of permissions for all folders within specified SharePoint Online document libraries.
+.DESCRIPTION
+    This script connects to a SharePoint Online site, iterates through a list of specified document libraries,
+    and inspects the permissions of every folder within them. It identifies whether a folder has unique permissions
+    or inherits them from its parent. The output is a detailed CSV file.
+.NOTES
+    Author: cdrinkwater
+    Version: 1.1 - Fixed Get-PnPConnection error, improved module handling and cleanup.
+#>
+
+#region CONFIGURATION
+# ------------------------------------------------------------------------------------
+# UPDATE THESE VARIABLES
+# ------------------------------------------------------------------------------------
+
+# The URL of your SharePoint Online site.
+$SiteURL = "<add Sharepoint Site>
+
+# List of Document Library titles to scan.
+$IncludedLibraryTitles = @("Documents")
+
+# Path to save the report
+$ReportPath = "C:\Temp\SharePointFolderPermissions.csv"
+# ------------------------------------------------------------------------------------
+#endregion CONFIGURATION
+
+#region SCRIPT LOGIC
+# --- PnP.PowerShell Module Check ---
+Function Assert-Module {
+    param(
+        [string]$ModuleName
+    )
+    if (-not (Get-Module -ListAvailable -Name $ModuleName)) {
+        Write-Host "The required module '$ModuleName' is not installed." -ForegroundColor Yellow
+        $install = Read-Host "Do you want to install it now? (Y/N)"
+        if ($install -match '^[Yy]') {
+            Write-Host "Installing $ModuleName... This may take a moment." -ForegroundColor Green
+            Install-Module $ModuleName -Scope CurrentUser -Force -AllowClobber
+            Import-Module $ModuleName
+        } else {
+            Write-Error "Script cannot continue without the module '$ModuleName'. Please install it manually and re-run the script."
+            break
+        }
+    } else {
+        Write-Host "Required module '$ModuleName' is available." -ForegroundColor Green
+    }
+}
+
+# --- Main Script Execution ---
+try {
+    # Ensure the module is installed and loaded
+    Assert-Module -ModuleName "PnP.PowerShell"
+    Import-Module "PnP.PowerShell" -ErrorAction Stop
+
+    # Connect to SharePoint Online
+    Write-Host "Connecting to SharePoint site: $SiteURL" -ForegroundColor Cyan
+    Connect-PnPOnline -Url $SiteURL -Interactive
+
+    # Initialize results
+    $permissionReport = @()
+
+    # Loop through specified libraries
+    foreach ($libraryTitle in $IncludedLibraryTitles) {
+        Write-Host "Processing library: '$libraryTitle'..." -ForegroundColor Cyan
+        $library = Get-PnPList -Identity $libraryTitle -ErrorAction SilentlyContinue
+
+        if (-not $library) {
+            Write-Warning "Library '$libraryTitle' not found on site $SiteURL. Skipping."
+            continue
+        }
+
+        Write-Host "  Fetching all items from '$libraryTitle'. This may take time..."
+        $listItems = Get-PnPListItem -List $libraryTitle -PageSize 1000
+        $folders = $listItems | Where-Object { $_.FileSystemObjectType -eq 'Folder' }
+        Write-Host "  Found $($folders.Count) folders to analyze."
+
+        foreach ($folder in $folders) {
+            $folderItem = Get-PnPListItem -List $libraryTitle -Id $folder.Id -Fields "HasUniqueRoleAssignments", "RoleAssignments"
+            $folderPath = $folder["FileRef"]
+            Write-Host "    Analyzing folder: $folderPath"
+
+            if ($folderItem.HasUniqueRoleAssignments) {
+                $roleAssignments = $folderItem.RoleAssignments
+                foreach ($roleAssignment in $roleAssignments) {
+                    $principal = Get-PnPProperty -ClientObject $roleAssignment -Property Member
+                    $permissionLevels = Get-PnPProperty -ClientObject $roleAssignment -Property RoleDefinitionBindings
+                    foreach ($permissionLevel in $permissionLevels) {
+                        $reportEntry = [PSCustomObject]@{
+                            SiteURL             = $SiteURL
+                            LibraryName         = $libraryTitle
+                            FolderPath          = $folderPath
+                            InheritsPermissions = $false
+                            UserOrGroup         = $principal.Title
+                            PrincipalType       = $principal.PrincipalType
+                            PermissionLevel     = $permissionLevel.Name
+                        }
+                        $permissionReport += $reportEntry
+                    }
+                }
+            }
+            else {
+                $reportEntry = [PSCustomObject]@{
+                    SiteURL             = $SiteURL
+                    LibraryName         = $libraryTitle
+                    FolderPath          = $folderPath
+                    InheritsPermissions = $true
+                    UserOrGroup         = "Inherited from Parent"
+                    PrincipalType       = "N/A"
+                    PermissionLevel     = "N/A"
+                }
+                $permissionReport += $reportEntry
+            }
+        }
+    }
+
+    if ($permissionReport.Count -gt 0) {
+        $permissionReport | Export-Csv -Path $ReportPath -NoTypeInformation
+        Write-Host "------------------------------------------------------------" -ForegroundColor Green
+        Write-Host "Permission report generated successfully!" -ForegroundColor Green
+        Write-Host "File saved to: $ReportPath" -ForegroundColor Green
+        Write-Host "------------------------------------------------------------"
+    }
+    else {
+        Write-Warning "No folders were found in the specified libraries, or the libraries themselves were not found. Report not generated."
+    }
+}
+catch {
+    Write-Error "An error occurred: $($_.Exception.Message)"
+}
+finally {
+    try {
+        # Disconnect cleanly if possible
+        Disconnect-PnPOnline -ErrorAction SilentlyContinue
+        Write-Host "Disconnected from SharePoint site." -ForegroundColor Cyan
+    }
+    catch {
+        Write-Warning "Could not disconnect cleanly. It may not be necessary."
+    }
+}
+#endregion SCRIPT LOGIC
