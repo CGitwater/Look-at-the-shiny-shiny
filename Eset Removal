@@ -1,0 +1,10 @@
+### change the MSI product code depending on the version of Eset #########
+
+$packages = @(
+    '{95382298-50BB-4BBC-A19E-120A6378C972}',  # ESET Version 12.0.2045.0
+    '{7F967A8A-FFCB-4D24-8AE9-40EF599563A1}'   # ESET Management Agent
+)
+
+foreach ($package in $packages) {
+    Start-Process -FilePath "msiexec.exe" -ArgumentList "/x $package /qn REBOOT=ReallySuppress" -Wait -WindowStyle Hidden | Out-Null
+}
